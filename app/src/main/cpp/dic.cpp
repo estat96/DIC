@@ -27,7 +27,10 @@ struct Img {
 };
 
 struct Point {
-    float x, y;            // центр подмножества на опорном кадре
+    float x, y;            // центр подмножества на текущем опорном кадре
+    float x0, y0;          // исходное положение узла (первый кадр)
+    float acc[2];          // накопленное смещение (инкрементальный режим)
+    float F[4];            // накопленный градиент деформации [Fxx Fxy; Fyx Fyy]
     // предвычисленное для IC-GN
     std::vector<float> f;  // нормированные (f-fm) значения
     std::vector<float> J;  // n*6 Якобиан крутизны
@@ -43,6 +46,7 @@ struct Ctx {
     int nx = 0, ny = 0, R = 15, search = 8, step = 10;
     int nthreads = 4;
     float minZncc = 0.6f;
+    bool incremental = false;   // false: относительно 1-го кадра; true: кадр к кадру (1-2, 2-3, ...)
 };
 
 void loadLuma(Img& im, const uint8_t* d, int w, int h, int stride) {
@@ -77,38 +81,42 @@ bool inv6(const double* A, float* out) {
 void prepPoint(const Img& f, Point& P, int R) {
     int n = (2 * R + 1) * (2 * R + 1);
     P.f.resize(n); P.J.resize((size_t)n * 6);
-    int cx = (int)P.x, cy = (int)P.y;
+    P.ok = false;
+    if (P.x - R < 2 || P.y - R < 2 || P.x + R >= f.w - 3 || P.y + R >= f.h - 3) return;
+    const bool integer = (P.x == std::floor(P.x)) && (P.y == std::floor(P.y));
+    auto S = [&](float x, float y) { return integer ? f.at((int)x, (int)y) : f.bilin(x, y); };
     double s = 0;
     int k = 0;
-    for (int dy = -R; dy <= R; ++dy) for (int dx = -R; dx <= R; ++dx) s += f.at(cx + dx, cy + dy);
+    for (int dy = -R; dy <= R; ++dy) for (int dx = -R; dx <= R; ++dx, ++k) { P.f[k] = S(P.x + dx, P.y + dy); s += P.f[k]; }
     P.fm = (float)(s / n);
     double ss = 0;
-    for (int dy = -R; dy <= R; ++dy) for (int dx = -R; dx <= R; ++dx) {
-        float v = f.at(cx + dx, cy + dy) - P.fm; ss += v * v;
-    }
+    for (int i = 0; i < n; ++i) { P.f[i] -= P.fm; ss += (double)P.f[i] * P.f[i]; }
     P.fs = (float)std::sqrt(ss);
     double H[36] = {0};
     k = 0;
     for (int dy = -R; dy <= R; ++dy) for (int dx = -R; dx <= R; ++dx, ++k) {
-        int x = cx + dx, y = cy + dy;
-        P.f[k] = f.at(x, y) - P.fm;
-        // градиент Собеля (меньше шума, чем центральная разность)
-        float gx = ((f.at(x + 1, y - 1) + 2 * f.at(x + 1, y) + f.at(x + 1, y + 1)) -
-                    (f.at(x - 1, y - 1) + 2 * f.at(x - 1, y) + f.at(x - 1, y + 1))) * 0.125f;
-        float gy = ((f.at(x - 1, y + 1) + 2 * f.at(x, y + 1) + f.at(x + 1, y + 1)) -
-                    (f.at(x - 1, y - 1) + 2 * f.at(x, y - 1) + f.at(x + 1, y - 1))) * 0.125f;
+        float x = P.x + dx, y = P.y + dy, gx, gy;
+        if (integer) {   // Собель
+            int xi = (int)x, yi = (int)y;
+            gx = ((f.at(xi + 1, yi - 1) + 2 * f.at(xi + 1, yi) + f.at(xi + 1, yi + 1)) -
+                  (f.at(xi - 1, yi - 1) + 2 * f.at(xi - 1, yi) + f.at(xi - 1, yi + 1))) * 0.125f;
+            gy = ((f.at(xi - 1, yi + 1) + 2 * f.at(xi, yi + 1) + f.at(xi + 1, yi + 1)) -
+                  (f.at(xi - 1, yi - 1) + 2 * f.at(xi, yi - 1) + f.at(xi + 1, yi - 1))) * 0.125f;
+        } else {
+            gx = 0.5f * (f.bilin(x + 1, y) - f.bilin(x - 1, y));
+            gy = 0.5f * (f.bilin(x, y + 1) - f.bilin(x, y - 1));
+        }
         float* j = &P.J[(size_t)k * 6];
         j[0] = gx; j[1] = gx * dx; j[2] = gx * dy; j[3] = gy; j[4] = gy * dx; j[5] = gy * dy;
         for (int a = 0; a < 6; ++a) for (int b = 0; b < 6; ++b) H[a * 6 + b] += j[a] * j[b];
     }
     P.ok = P.fs > 2.0f * std::sqrt((float)n) && inv6(H, P.H);  // отбраковка бестекстурных зон
-    std::memset(P.p, 0, sizeof(P.p));
 }
 
 // целочисленный ZNCC-поиск; возвращает лучший коэффициент
 float zncc(const Ctx& c, const Point& P, int ux, int vy) {
     const int R = c.R;
-    int cx = (int)P.x + ux, cy = (int)P.y + vy;
+    int cx = (int)std::lround(P.x) + ux, cy = (int)std::lround(P.y) + vy;
     if (cx - R < 1 || cy - R < 1 || cx + R >= c.cur.w - 2 || cy + R >= c.cur.h - 2) return -2;
     double sg = 0, sgg = 0, sfg = 0;
     int k = 0;
@@ -182,54 +190,12 @@ template <class F> void parallel(int n, int th, F fn) {
 
 } // namespace
 
-extern "C" {
-
-JNIEXPORT jlong JNICALL Java_com_dic_app_DicNative_create(JNIEnv*, jclass) {
-    auto* c = new Ctx();
-    c->nthreads = std::max(2u, std::thread::hardware_concurrency());
-    return (jlong)c;
-}
-
-JNIEXPORT void JNICALL Java_com_dic_app_DicNative_destroy(JNIEnv*, jclass, jlong h) { delete (Ctx*)h; }
-
-// Возвращает [nx, ny]; координаты узлов можно получить через gridCoords
-JNIEXPORT jintArray JNICALL Java_com_dic_app_DicNative_setReference(JNIEnv* env, jclass, jlong h,
-        jobject buf, jint w, jint hh, jint stride, jint x0, jint y0, jint x1, jint y1,
-        jint subset, jint step, jint search, jfloat minZncc) {
-    auto* c = (Ctx*)h;
-    loadLuma(c->ref, (const uint8_t*)env->GetDirectBufferAddress(buf), w, hh, stride);
-    c->R = std::max(5, subset / 2); c->step = std::max(2, step); c->search = search; c->minZncc = minZncc;
-    int m = c->R + 2;
-    x0 = std::max(x0, m); y0 = std::max(y0, m); x1 = std::min(x1, w - m - 1); y1 = std::min(y1, hh - m - 1);
-    c->nx = x1 > x0 ? (x1 - x0) / c->step + 1 : 0;
-    c->ny = y1 > y0 ? (y1 - y0) / c->step + 1 : 0;
-    c->pts.assign((size_t)c->nx * c->ny, Point());
-    for (int j = 0; j < c->ny; ++j) for (int i = 0; i < c->nx; ++i) {
-        Point& P = c->pts[(size_t)j * c->nx + i];
-        P.x = (float)(x0 + i * c->step); P.y = (float)(y0 + j * c->step);
-    }
-    parallel((int)c->pts.size(), c->nthreads, [&](int i) { prepPoint(c->ref, c->pts[i], c->R); });
-    jint r[2] = {c->nx, c->ny};
-    jintArray a = env->NewIntArray(2); env->SetIntArrayRegion(a, 0, 2, r);
-    return a;
-}
-
-JNIEXPORT void JNICALL Java_com_dic_app_DicNative_gridCoords(JNIEnv* env, jclass, jlong h, jfloatArray xy) {
-    auto* c = (Ctx*)h;
-    std::vector<float> o(c->pts.size() * 2);
-    for (size_t i = 0; i < c->pts.size(); ++i) { o[2 * i] = c->pts[i].x; o[2 * i + 1] = c->pts[i].y; }
-    env->SetFloatArrayRegion(xy, 0, (jsize)o.size(), o.data());
-}
-
-// out: на точку 7 float: u, v, ux, uy, vx, vy, zncc (NaN для отбракованных). Возвращает время, мс.
-JNIEXPORT jfloat JNICALL Java_com_dic_app_DicNative_process(JNIEnv* env, jclass, jlong h,
-        jobject buf, jint w, jint hh, jint stride, jfloatArray out) {
-    auto* c = (Ctx*)h;
+float runFrame(Ctx* c, const uint8_t* data, int w, int hh, int stride, std::vector<float>& res) {
     auto t0 = std::chrono::steady_clock::now();
     if (w != c->ref.w || hh != c->ref.h) return -1;
-    loadLuma(c->cur, (const uint8_t*)env->GetDirectBufferAddress(buf), w, hh, stride);
+    loadLuma(c->cur, data, w, hh, stride);
     int N = (int)c->pts.size();
-    std::vector<float> res((size_t)N * 7);
+    res.assign((size_t)N * 7, 0.f);
     const float nan = std::nanf("");
     parallel(N, c->nthreads, [&](int i) {
         Point& P = c->pts[i];
@@ -253,12 +219,85 @@ JNIEXPORT jfloat JNICALL Java_com_dic_app_DicNative_process(JNIEnv* env, jclass,
         float z = icgn(*c, P);
         if (z < c->minZncc || !std::isfinite(P.p[0])) {
             std::memcpy(P.p, keep, sizeof keep);
-            for (int q = 0; q < 7; ++q) o[q] = nan; o[6] = z; return;
+            for (int q = 0; q < 7; ++q) o[q] = nan;
+            o[6] = z; return;
         }
-        o[0] = P.p[0]; o[1] = P.p[3]; o[2] = P.p[1]; o[3] = P.p[2]; o[4] = P.p[4]; o[5] = P.p[5]; o[6] = z;
+        if (!c->incremental) {
+            o[0] = P.p[0]; o[1] = P.p[3]; o[2] = P.p[1]; o[3] = P.p[2]; o[4] = P.p[4]; o[5] = P.p[5]; o[6] = z;
+            return;
+        }
+        // инкремент: F_tot = F_inc * F_tot, сдвиг узла в новое положение
+        float a = 1 + P.p[1], b = P.p[2], cc = P.p[4], d = 1 + P.p[5];
+        float F0 = a * P.F[0] + b * P.F[2], F1 = a * P.F[1] + b * P.F[3];
+        float F2 = cc * P.F[0] + d * P.F[2], F3 = cc * P.F[1] + d * P.F[3];
+        P.F[0] = F0; P.F[1] = F1; P.F[2] = F2; P.F[3] = F3;
+        P.acc[0] += P.p[0]; P.acc[1] += P.p[3];
+        P.x += P.p[0]; P.y += P.p[3];
+        // прогноз на следующий кадр — тот же инкремент (скорость), без деформационной части
+        P.p[1] = P.p[2] = P.p[4] = P.p[5] = 0;
+        o[0] = P.acc[0]; o[1] = P.acc[1]; o[2] = P.F[0] - 1; o[3] = P.F[1]; o[4] = P.F[2]; o[5] = P.F[3] - 1; o[6] = z;
     });
-    env->SetFloatArrayRegion(out, 0, (jsize)res.size(), res.data());
+    if (c->incremental) {   // текущий кадр становится эталоном для следующего
+        std::swap(c->ref, c->cur);
+        parallel(N, c->nthreads, [&](int i) {
+            Point& P = c->pts[i];
+            if (std::isfinite(res[(size_t)i * 7])) prepPoint(c->ref, P, c->R); else P.ok = false;  // потерянный узел не восстанавливается
+        });
+    }
     return std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t0).count();
+}
+
+
+extern "C" {
+
+JNIEXPORT jlong JNICALL Java_com_dic_app_DicNative_create(JNIEnv*, jclass) {
+    auto* c = new Ctx();
+    c->nthreads = std::max(2u, std::thread::hardware_concurrency());
+    return (jlong)c;
+}
+
+JNIEXPORT void JNICALL Java_com_dic_app_DicNative_setIncremental(JNIEnv*, jclass, jlong h, jboolean inc) { ((Ctx*)h)->incremental = inc; }
+
+JNIEXPORT void JNICALL Java_com_dic_app_DicNative_destroy(JNIEnv*, jclass, jlong h) { delete (Ctx*)h; }
+
+// Возвращает [nx, ny]; координаты узлов можно получить через gridCoords
+JNIEXPORT jintArray JNICALL Java_com_dic_app_DicNative_setReference(JNIEnv* env, jclass, jlong h,
+        jobject buf, jint w, jint hh, jint stride, jint x0, jint y0, jint x1, jint y1,
+        jint subset, jint step, jint search, jfloat minZncc) {
+    auto* c = (Ctx*)h;
+    loadLuma(c->ref, (const uint8_t*)env->GetDirectBufferAddress(buf), w, hh, stride);
+    c->R = std::max(5, subset / 2); c->step = std::max(2, step); c->search = search; c->minZncc = minZncc;
+    int m = c->R + 2;
+    x0 = std::max(x0, m); y0 = std::max(y0, m); x1 = std::min(x1, w - m - 1); y1 = std::min(y1, hh - m - 1);
+    c->nx = x1 > x0 ? (x1 - x0) / c->step + 1 : 0;
+    c->ny = y1 > y0 ? (y1 - y0) / c->step + 1 : 0;
+    c->pts.assign((size_t)c->nx * c->ny, Point());
+    for (int j = 0; j < c->ny; ++j) for (int i = 0; i < c->nx; ++i) {
+        Point& P = c->pts[(size_t)j * c->nx + i];
+        P.x = P.x0 = (float)(x0 + i * c->step); P.y = P.y0 = (float)(y0 + j * c->step);
+        std::memset(P.p, 0, sizeof P.p); P.acc[0] = P.acc[1] = 0;
+        P.F[0] = 1; P.F[1] = 0; P.F[2] = 0; P.F[3] = 1;
+    }
+    parallel((int)c->pts.size(), c->nthreads, [&](int i) { prepPoint(c->ref, c->pts[i], c->R); });
+    jint r[2] = {c->nx, c->ny};
+    jintArray a = env->NewIntArray(2); env->SetIntArrayRegion(a, 0, 2, r);
+    return a;
+}
+
+JNIEXPORT void JNICALL Java_com_dic_app_DicNative_gridCoords(JNIEnv* env, jclass, jlong h, jfloatArray xy) {
+    auto* c = (Ctx*)h;
+    std::vector<float> o(c->pts.size() * 2);
+    for (size_t i = 0; i < c->pts.size(); ++i) { o[2 * i] = c->pts[i].x0; o[2 * i + 1] = c->pts[i].y0; }
+    env->SetFloatArrayRegion(xy, 0, (jsize)o.size(), o.data());
+}
+
+// out: на точку 7 float: u, v, ux, uy, vx, vy, zncc (NaN для отбракованных). Возвращает время, мс.
+JNIEXPORT jfloat JNICALL Java_com_dic_app_DicNative_process(JNIEnv* env, jclass, jlong h,
+        jobject buf, jint w, jint hh, jint stride, jfloatArray out) {
+    std::vector<float> res;
+    float ms = runFrame((Ctx*)h, (const uint8_t*)env->GetDirectBufferAddress(buf), w, hh, stride, res);
+    if (ms >= 0) env->SetFloatArrayRegion(out, 0, (jsize)res.size(), res.data());
+    return ms;
 }
 
 // резкость (дисперсия Лапласиана) в прямоугольнике — индикатор фокуса

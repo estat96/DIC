@@ -30,4 +30,5 @@ dependencies {
     implementation("androidx.camera:camera-view:$cx")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.core:core-ktx:1.15.0")
+    implementation("androidx.documentfile:documentfile:1.0.1")
 }

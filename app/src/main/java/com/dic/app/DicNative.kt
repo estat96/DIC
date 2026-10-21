@@ -6,6 +6,7 @@ object DicNative {
     init { System.loadLibrary("dic") }
     @JvmStatic external fun create(): Long
     @JvmStatic external fun destroy(h: Long)
+    @JvmStatic external fun setIncremental(h: Long, inc: Boolean)
     @JvmStatic external fun setReference(h: Long, y: ByteBuffer, w: Int, hh: Int, stride: Int,
         x0: Int, y0: Int, x1: Int, y1: Int, subset: Int, step: Int, search: Int, minZncc: Float): IntArray
     @JvmStatic external fun gridCoords(h: Long, xy: FloatArray)
