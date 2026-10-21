@@ -1,0 +1,36 @@
+name: Hardware & targets
+on:
+  push:
+    paths: [ "hardware/**.scad", "targets/make_targets.py", ".github/workflows/hardware.yml" ]
+  workflow_dispatch: {}
+permissions: { contents: write }
+jobs:
+  render:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install OpenSCAD
+        run: sudo apt-get update -q && sudo apt-get install -yq openscad xvfb fonts-liberation > /dev/null
+      - name: Export STL + preview PNG
+        run: |
+          set -e
+          cd hardware; mkdir -p stl img
+          err=0
+          build() {  # file, part-name, extra args
+            f=$1; n=$2; shift 2
+            if ! openscad -q "$@" -o stl/$n.stl $f 2> log_$n.txt; then err=1; sed "s/^/::error::$n: /" log_$n.txt | head -5; fi
+            xvfb-run -a openscad -q "$@" -o img/$n.png --imgsize=1200,900 --viewall --autocenter --colorscheme=Tomorrow --render $f 2>/dev/null || true
+          }
+          build phone_mount_pura70.scad phone_mount_pura70
+          build step_block.scad step_block
+          build tilt_wedges.scad tilt_wedges
+          build target_holder.scad target_holder
+          for p in base carriage knob; do build translation_stage.scad translation_stage_$p -D "part=\"$p\""; done
+          build translation_stage.scad translation_stage_assembly -D 'part="all"'
+          rm -f log_*.txt
+          exit $err
+      - name: Commit outputs
+        run: |
+          git config user.name "github-actions"; git config user.email "actions@github.com"
+          git add hardware/stl hardware/img
+          git diff --cached --quiet || (git commit -m "Render hardware STL/PNG [skip ci]" && git push)
