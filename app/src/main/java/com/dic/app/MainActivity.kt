@@ -148,9 +148,6 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 
     // ================= UI =================
     private fun buildUi() {
-        if (Build.VERSION.SDK_INT >= 30) window.insetsController?.let {
-            it.hide(WindowInsets.Type.systemBars()); it.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        }
         val railW = dp(132); val barH = dp(56)
         val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
         preview = PreviewView(this).apply {
@@ -243,6 +240,9 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         root.addView(rulerPanel, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(10); leftMargin = railW })
 
         setContentView(root)
+        if (Build.VERSION.SDK_INT >= 30) runCatching { window.insetsController }.getOrNull()?.let {
+            it.hide(WindowInsets.Type.systemBars()); it.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
         force.onUpdate = { updateToggles() }
         updateToggles(); updateFocusUi()
     }

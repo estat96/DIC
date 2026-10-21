@@ -46,7 +46,7 @@ jobs:
             sleep 5
             adb logcat -d > logcat.txt || true
             adb shell pidof com.dic.app > pid.txt || true
-            grep -E "FATAL EXCEPTION|AndroidRuntime|Caused by|at com\.dic|UnsatisfiedLink|dlopen" logcat.txt | head -40 | while IFS= read -r l; do echo "::error::$l"; done
+            grep -E "FATAL EXCEPTION|E AndroidRuntime|at com\.dic|UnsatisfiedLink" logcat.txt | grep -v "TransactionExecutor\|ActivityThread\|Shutting" | head -9 | while IFS= read -r l; do echo "::error::$l"; done
             if [ ! -s pid.txt ]; then echo "::error::APP NOT RUNNING"; else echo "::notice::app alive pid $(cat pid.txt)"; fi
             adb exec-out screencap -p > screen.png || true
       - uses: actions/upload-artifact@v4
