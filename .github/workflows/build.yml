@@ -23,6 +23,7 @@ jobs:
     permissions: { contents: write }
   smoke:
     needs: build
+    permissions: { contents: write }
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4
@@ -38,17 +39,26 @@ jobs:
           target: google_apis
           disable-animations: true
           script: |
+            adb root || true; sleep 3
             adb install -r -g DIC.apk
             adb logcat -c
             adb shell am start -W -n com.dic.app/.MainActivity
             sleep 15
-            adb shell input tap 70 60 || true
-            sleep 5
-            adb logcat -d > logcat.txt || true
+            adb exec-out screencap -p > main.png
+            adb shell input tap 300 500 || true
+            sleep 3
+            adb shell am start -W -n com.dic.app/.PlayerActivity || true
+            sleep 6
+            adb exec-out screencap -p > player.png
+            adb shell input keyevent 4; sleep 2; adb shell input keyevent 4; sleep 2
             adb shell pidof com.dic.app > pid.txt || true
-            grep -E "FATAL EXCEPTION|E AndroidRuntime|at com\.dic|UnsatisfiedLink" logcat.txt | grep -v "TransactionExecutor\|ActivityThread\|Shutting" | head -9 | while IFS= read -r l; do echo "::error::$l"; done
+            adb logcat -d > logcat.txt || true
+            grep -E "FATAL EXCEPTION|E AndroidRuntime|at com\.dic" logcat.txt | grep -v "TransactionExecutor\|ActivityThread\|Shutting" | head -9 | while IFS= read -r l; do echo "::error::$l"; done
             if [ ! -s pid.txt ]; then echo "::error::APP NOT RUNNING"; else echo "::notice::app alive pid $(cat pid.txt)"; fi
-            adb exec-out screencap -p > screen.png || true
+      - name: Attach screenshots to release
+        if: always()
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: gh release upload "build-${{ github.run_number }}" main.png player.png logcat.txt --clobber -R ${{ github.repository }} || true
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: smoke, path: "logcat.txt\nscreen.png" }
