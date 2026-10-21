@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(dic)
+add_library(dic SHARED dic.cpp)
+target_compile_options(dic PRIVATE -O3 -ffast-math -funroll-loops)
+target_link_libraries(dic log)
