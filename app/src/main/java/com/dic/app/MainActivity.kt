@@ -328,9 +328,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun viewDialog() {
         val ll = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(40, 20, 40, 0) }
-        val cbV = CheckBox(this).apply { text = "Векторы смещений"; isChecked = overlay.showVectors }; ll.addView(cbV)
+        val cbV = CheckBox(this).apply { text = "Векторы смещений"; isChecked = this@MainActivity.overlay.showVectors }; ll.addView(cbV)
         val eK = numField("Масштаб векторов (×)", "${overlay.vecScale}", ll)
-        val cbA = CheckBox(this).apply { text = "Автодиапазон шкалы"; isChecked = overlay.autoRange }; ll.addView(cbA)
+        val cbA = CheckBox(this).apply { text = "Автодиапазон шкалы"; isChecked = this@MainActivity.overlay.autoRange }; ll.addView(cbA)
         val eMin = numField("Мин. шкалы", "${overlay.lastMin}", ll)
         val eMax = numField("Макс. шкалы", "${overlay.lastMax}", ll)
         AlertDialog.Builder(this).setTitle("Отображение").setView(ll)
