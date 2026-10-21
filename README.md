@@ -1,34 +1,34 @@
-# DIC — цифровая корреляция изображений на Android
+# DIC — real-time Digital Image Correlation on Android
 
-Камера → фокус → ROI → «Старт»: каждый кадр сразу обрабатывается, поверх изображения строится карта смещений/деформаций. Фото не сохраняются — только CSV с полями.
+Point the phone camera at a speckled specimen, focus, lock focus, press **START**: every frame is correlated on the fly and the displacement / strain maps are drawn over the live image. No photos are stored — only the fields (CSV), optionally with synchronised force from an external load cell.
 
-## Готовый APK
-Вкладка **Actions** → последний запуск «Build APK» → артефакт `DIC-apk`, либо **Releases** (`DIC.apk`). Сборка запускается автоматически при каждом push в `main`.
+## Get the APK
+**Releases** → latest `DIC.apk` (built automatically by GitHub Actions on every push to `main`).
 
-## Работа
-1. **ROI** — выделите область пальцем (тянуть углы/рамку или нарисовать новую). Кнопки «Сетка» и «Подмнож.» показывают узлы и размер подмножества.
-2. **Фокус** (панель внизу): «Авто» — тап по объекту; «Ручной» — ползунок дистанции. Индикатор «резкость» в ROI помогает найти максимум.
-3. **🔒 Зафиксировать** — линза ставится на текущую дистанцию (AF выключается), блокируются экспозиция и баланс белого, отключается стабилизация. До снятия 🔒 фокус не меняется — в том числе при «Старт».
-4. **▶ Старт** — расчёт на лету. Режим (в Настройках):
-   - *к первому кадру* (0→1, 0→2, …) — без накопления ошибки; «Сброс эталона» делает текущий кадр новым нулём;
-   - *кадр к кадру* (1→2, 2→3, …) — узлы следуют за материалом, смещения и градиент деформации накапливаются (F = F_inc·F); подходит для больших деформаций.
-5. **Поле** — |U|, u, v, εxx, εyy, εxy, экв. деформация, ZNCC. **Вид** — векторы, отдельные ограничения минимума и максимума шкалы.
-6. **Настройки** — параметры DIC, разрешение, папка сохранения, «По умолчанию».
-7. **Результаты** — список CSV в папке сохранения: открыть в плеере, отправить, удалить.
-8. **Плеер** — карты по кадрам, проигрывание, перемотка, единая шкала по всем кадрам; тап по карте — история выбранной точки, иначе график среднего по ROI.
+## Workflow
+1. **ROI** — toggle, then drag corners / the frame or draw a new box. **Grid** and **Subsets** show the nodes and the subset size before the test.
+2. **Focus** (bottom bar) — *Auto*: tap the specimen; *Manual*: slider. Watch *Sharpness* in the status box.
+3. **Lock focus** — the lens is held at the current distance (AF off), exposure and white balance are locked, stabilisation is disabled. Nothing changes until you unlock — including when START is pressed.
+4. **Calibrate** — pixel → mm:
+   - *Ruler* (recommended): drag two markers onto a known length and type it in mm;
+   - *Lens model*: estimate from focal length, sensor size and the lens focus distance (Z·pitch/f), with field of view, depth of field, out-of-plane pseudo-strain (Δz/Z) and tilt-induced scale error;
+   - *Manual* mm/px.
+   The focus distance at calibration is stored; a warning appears if it changes. The status box shows phone **tilt** (gravity sensor) for a wall-mounted or downward-looking setup — keep it below 1°.
+5. **START** — correlation mode (Settings): *versus first frame* or *frame to frame* (accumulated). **Reset reference** makes the current frame the new zero.
+6. **Field** — |U|, u, v, εxx, εyy, εxy, ε1, ε2, εeq, ZNCC. **Strain** — *Subset* (IC-GN gradients), *Mesh* (Q4 finite elements on the DIC grid, nodal averaging), *Local fit* (least-squares strain window). **Scale bar** toggles the bar in the lower right. **Display…** — vectors, deformed mesh, colour limits, live force plot.
+7. **Force sensor** — starts a local-only Wi-Fi hotspot (no internet) and a TCP/UDP receiver on port 5000. The device sends one number per line. See `firmware/force_sender` (ESP32 + HX711). Tare and scaling factor in the app.
+8. **Results / Player** — browse recordings, play / scrub fields, tap a node for its history. **Analysis** — force–elongation (virtual extensometer), stress–strain, transverse–axial strain; E, ν, Rp0.2, Rm, uniform and final strain.
 
-## Формат CSV
-Заголовок `# mode=… # image=W,H # grid=nx,ny,step,subset # scale_mm_per_px=…`, затем
-`frame,t_ms,x_px,y_px,u,v,exx,eyy,exy,zncc,ux,uy,vx,vy` — все узлы каждого записанного кадра (NaN — узел отбракован), кадр 0 — эталон.
-x,y — исходные координаты узлов; деформации — Грина–Лагранжа; ux…vy — градиент смещений (F − I).
-По умолчанию файлы лежат в `Android/data/com.dic.app/files/results/`.
+## Algorithm
+- Luminance (Y) plane straight from the camera buffer, no copies, no stored images.
+- Integer ZNCC search around the previous solution, then IC-GN (inverse-compositional Gauss–Newton) with an affine subset shape function and ZNSSD criterion; Green–Lagrange strains.
+- Frame-to-frame mode moves nodes with the material and accumulates the deformation gradient (F = F_inc·F).
+- Parallel C++/NDK on all cores. Synthetic test: ≈0.005 px displacement error, ≈20 ms per frame for 270 nodes.
 
-## Алгоритм
-- Только яркостный канал (Y), без копирования из буфера камеры.
-- Целочисленный поиск ZNCC вокруг смещения с прошлого кадра (быстро) с расширением при потере.
-- Субпиксельное уточнение IC-GN, аффинная форма подмножества, критерий ZNSSD; деформации Грина–Лагранжа из градиентов формы.
-- Опорный кадр фиксирован (лагранжево описание); параллельно на всех ядрах (C++/NDK, -O3).
-- Отбраковка: бестекстурные подмножества и ZNCC < порога.
+## CSV (v3)
+Header lines `# mode= # image=W,H # grid=nx,ny,step,subset # scale_mm_per_px= # calibration= # focus_diopters= # strain= # force_unit=`, then
+`frame,t_ms,x_px,y_px,u,v,exx,eyy,exy,zncc,ux,uy,vx,vy,force` — all nodes of every recorded frame (NaN = rejected); frame 0 is the reference.
+Default folder: `Android/data/com.dic.app/files/results/`, or any folder chosen in Settings.
 
-Настройки: подмножество, шаг сетки, радиус поиска, порог ZNCC, масштаб мм/px, разрешение (640×480 / 1280×720 / 1920×1080), прореживание записи.
-Рекомендации: случайный спекл 3–5 px, рассеянный свет, штатив.
+## Tips
+Random speckle 3–5 px, diffuse light, tripod, sensor parallel to the specimen, focus locked, calibrate after locking focus.

@@ -19,11 +19,11 @@ class Storage(private val ctx: Context, private val settings: Settings) {
     }
 
     fun folderLabel(): String = tree()?.let { "📁 " + (it.name ?: it.uri.toString()) }
-        ?: ("Папка приложения: " + defaultDir().absolutePath)
+        ?: ("App folder: " + defaultDir().absolutePath)
 
     fun create(name: String): Pair<OutputStream, Uri> {
         tree()?.let { t ->
-            val f = t.createFile("text/csv", name) ?: error("Не удалось создать файл в выбранной папке")
+            val f = t.createFile("text/csv", name) ?: error("Cannot create a file in the selected folder")
             return ctx.contentResolver.openOutputStream(f.uri)!! to f.uri
         }
         val f = File(defaultDir(), name)
