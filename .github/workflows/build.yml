@@ -2,14 +2,19 @@ name: Build APK
 on: { push: { branches: [ main ] }, workflow_dispatch: {} }
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with: { distribution: temurin, java-version: 17 }
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: "8.14.3" }
-      - run: gradle :app:assembleRelease --no-daemon
+      - name: Build
+        run: |
+          set -o pipefail
+          gradle :app:assembleRelease --no-daemon --stacktrace 2>&1 | tee build.log || {
+            grep -E "error|Error|e: |What went wrong|Could not|FAILED|> " build.log | head -60 | while IFS= read -r l; do echo "::error::$l"; done
+            exit 1; }
       - run: cp app/build/outputs/apk/release/app-release.apk DIC.apk
       - uses: actions/upload-artifact@v4
         with: { name: DIC-apk, path: DIC.apk }
