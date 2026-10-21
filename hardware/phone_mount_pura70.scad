@@ -36,7 +36,7 @@ module cradle() {
         // tripod socket from below, axis along -y
         translate([(grip_len + wall) / 2, -foot_h, (T + back + wall) / 2]) rotate([-90, 0, 0]) tripod_socket(foot_h - 1);
         // engraved label
-        translate([(grip_len + wall) / 2, -foot_h + 0.5, (T + back + wall) / 2 + 7]) rotate([90, 0, 0]) label("DIC", 4, 0.6);
+        translate([(grip_len + wall) / 2 + 13, -foot_h + 0.5, (T + back + wall) / 2]) rotate([90, 0, 0]) label("DIC", 4, 0.6);
     }
 }
 
